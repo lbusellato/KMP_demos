@@ -21,8 +21,10 @@ class KMP:
         Coefficient for the discrete derivative.
     kernel_gamma : int, default=6
         Coefficient for the rbf kernel. 
+    priorities : array-like of shape (n_trajectories,), default=None
+        Functions that map the input space into a priority value for trajectory superposition.
     """
-    def __init__(self, l=1, lc=100, tol=0.002, kernel_delta=0.001, kernel_gamma=6) -> None:
+    def __init__(self, l=0.5, lc=100, tol=0.0005, kernel_delta=0.0001, kernel_gamma=6, priorities=None) -> None:
         self.__logger = logging.getLogger(__name__)
         self.trained = False
         self.l = l
@@ -30,6 +32,7 @@ class KMP:
         self.tol = tol
         self.kernel_delta = kernel_delta
         self.kernel_gamma = kernel_gamma
+        self.priorities = priorities
 
     def set_waypoint(self, s, xi, sigma):
         """Adds a waypoint to the database, checking for conflicts.
@@ -43,24 +46,24 @@ class KMP:
         sigma : array-like of shape (n_output_features,n_output_features,n_samples)
             Array of covariance matrices
         """
-        # Loop over the reference database to find any conflicts
-        min_dist = math.inf
-        for i in range(self.N):
-            dist = np.linalg.norm(self.s[:,i]-s)
-            if  dist < min_dist:
-                min_dist = dist
-                id = i
-        if min_dist < self.tol:
-            # Replace the conflicting point
-            self.s[:,id] = s
-            self.xi[:,id] = xi
-            self.sigma[:,:,id] = sigma
-        else:
-            # Add the new point to the database
-            self.s = np.append(self.s, s)
-            self.xi = np.append(self.xi, xi)
-            self.sigma = np.append(self.sigma, sigma)
-        self.N = self.s.shape[1]
+        for j in range(len(s)):
+            # Loop over the reference database to find any conflicts
+            min_dist = math.inf
+            for i in range(self.N):
+                dist = np.linalg.norm(self.s[:,i]-s[j])
+                if  dist < min_dist:
+                    min_dist = dist
+                    id = i
+            if min_dist < self.tol:
+                # Replace the conflicting point
+                self.s[:,id] = s[j]
+                self.xi[:,id] = xi[j]
+                self.sigma[:,:,id] = sigma[j]
+            else:
+                # Add the new point to the database
+                self.s = np.append(self.s, s[j])
+                self.xi = np.append(self.xi, xi[j])
+                self.sigma = np.append(self.sigma, sigma[j])
         # Refit the model with the new data
         self.fit(self.s, self.xi, self.sigma)
 
@@ -80,10 +83,10 @@ class KMP:
             The kernel matrix evaluated in the provided input pair.
         """
         # Radial basis function kernel
-        s1dt = s1 + self.kernel_delta
-        s2dt = s2 + self.kernel_delta
+        """s1dt = s1 + self.kernel_delta
+        s2dt = s2 + self.kernel_delta"""
         kt_t = np.exp(-self.kernel_gamma*(s1-s2)**2)
-        kt_dt_tmp = np.exp(-self.kernel_gamma*(s1-s2dt)**2)
+        """kt_dt_tmp = np.exp(-self.kernel_gamma*(s1-s2dt)**2)
         kdt_t_tmp = np.exp(-self.kernel_gamma*(s1dt-s2)**2)
         kdt_dt_tmp = np.exp(-self.kernel_gamma*(s1dt-s2dt)**2)
         kt_dt = (kt_dt_tmp - kt_t)/self.kernel_delta
@@ -93,42 +96,65 @@ class KMP:
         dim2 = int(self.O/2)
         for i in range(dim2):
             kernel[i,i] = kt_t
-            kernel[i,i+dim2] = 0#kt_dt
-            kernel[i+dim2,i] = 0#kdt_t
-            kernel[i+dim2,i+dim2] = kdt_dt
+            kernel[i,i+dim2] = kt_dt if dim2 == 2 else 0
+            kernel[i+dim2,i] = kdt_t if dim2 == 2 else 0
+            kernel[i+dim2,i+dim2] = kdt_dt if dim2 == 2 else kt_t"""
+        kernel = np.eye(self.O)*kt_t
         return kernel
                 
     def fit(self, X, Y, var):
         """Train the model by computing the estimator matrices for the mean (K+lambda*sigma)^-1 and 
-        for the covariance (K+lambda_c*sigma)^-1.
+        for the covariance (K+lambda_c*sigma)^-1. The n_trajectories axis of the arguments is 
+        considered only if the `self.priorities` parameter is not None.
 
         Parameters
         ----------
         X : array-like of shape (n_input_features,n_samples)
             Array of input vectors.
-        Y : array-like of shape (n_output_features,n_samples)
+        Y : array-like of shape (n_trajectories,n_output_features,n_samples)
             Array of output vectors
-        var : array-like of shape (n_output_features,n_output_features,n_samples)
+        var : array-like of shape (n_trajectories,n_output_features,n_output_features,n_samples)
             Array of covariance matrices
         """
-        self.s = X
-        self.xi = Y
-        self.sigma = var
-        self.O = self.xi.shape[0]
-        self.N = self.xi.shape[1]
+        if self.priorities is None:
+            # Single trajectory
+            self.s = X.copy()
+            self.xi = Y.copy()
+            self.sigma = var.copy()
+            self.O = self.xi.shape[0]
+            self.N = self.xi.shape[1]
+        else:
+            # Trajectory superposition
+            L = len(Y)
+            self.s = X.copy()
+            self.xi = np.zeros_like(Y[0])
+            self.sigma = np.zeros_like(var[0])
+            self.O = self.xi.shape[0]
+            self.N = self.xi.shape[1]
+            # Compute covariances
+            for n in range(self.N):
+                for l in range(L):
+                    self.sigma[:,:,n] += np.linalg.inv(var[l][:,:,n]/self.priorities[l](self.s[:,n]))
+                # Covariance = precision^-1
+                self.sigma[:,:,n] = np.linalg.inv(self.sigma[:,:,n])
+            # Compute means
+            for n in range(self.N):
+                for l in range(L):
+                    self.xi[:,n] += np.linalg.inv(var[l][:,:,n]/self.priorities[l](self.s[:,n]))@Y[l][:,n]
+                self.xi[:,n] = self.sigma[:,:,n]@self.xi[:,n]
         k_mean = np.zeros((self.N*self.O,self.N*self.O))
         k_covariance = np.zeros((self.N*self.O,self.N*self.O))
         for i in range(self.N):
-            for j in range(i+1):
+            for j in range(i,self.N):
                 kernel = self.__kernel_matrix(self.s[:,i],self.s[:,j])
                 k_mean[i*self.O:(i+1)*self.O,j*self.O:(j+1)*self.O] = kernel
                 k_covariance[i*self.O:(i+1)*self.O,j*self.O:(j+1)*self.O] = kernel
-                if i != j:
+                if i == j:
+                    k_mean[j*self.O:(j+1)*self.O,i*self.O:(i+1)*self.O] += self.l*self.sigma[:,:,i]
+                    k_covariance[j*self.O:(j+1)*self.O,i*self.O:(i+1)*self.O] += self.lc*self.sigma[:,:,i]
+                else:
                     k_mean[j*self.O:(j+1)*self.O,i*self.O:(i+1)*self.O] = kernel
                     k_covariance[j*self.O:(j+1)*self.O,i*self.O:(i+1)*self.O] = kernel
-        sigma_diag = block_diag(*[self.sigma[:,:,i] for i in range(self.sigma.shape[2])])
-        k_mean += self.l*sigma_diag
-        k_covariance += self.lc*sigma_diag
         self.__mean_estimator = np.linalg.inv(k_mean)
         self.__covariance_estimator = np.linalg.inv(k_covariance)
     
