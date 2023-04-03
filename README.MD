@@ -17,16 +17,16 @@ Finally, the superposition of multiple feasible trajectories (bottom right plot)
 
 # References
 
-#### [1] KMP: learning and adaptation 
-[[Link to publication]](https://www.researchgate.net/publication/331481661_Non-parametric_Imitation_Learning_of_Robot_Motor_Skills)
+#### [1] KMP: learning, adaptation, superposition and extrapolaton. 
+[[Link to publication]](https://www.researchgate.net/publication/319349682_Kernelized_Movement_Primitives)
 ```
-@InProceedings{Huang19ICRA_1,
-   Title = {Non-parametric Imitation Learning of Robot Motor Skills},
-   Author = {Huang, Y. and Rozo, L. and Silv\'erio, J. and Caldwell, D. G.},
-   Booktitle = {Proc. {IEEE} International Conference on Robotics and Automation ({ICRA})},
-   Year = {2019},
-   Address = {Montreal, Canada},
-   Month = {May},
-   Pages = {5266--5272}
+@Article{Huang19IJRR,
+  Title = {Kernelized Movement Primitives},
+  Author = {Huang, Y. and Rozo, L. and Silv\'erio, J. and Caldwell, D. G.},
+  Journal = {International Journal of Robotics Research},
+  Year = {2019},
+  Volume={38},
+  Number={7},
+  Pages = {833--852},
 }
 ```
