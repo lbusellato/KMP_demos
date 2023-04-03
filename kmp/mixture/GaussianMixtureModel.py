@@ -11,7 +11,7 @@ class GaussianMixtureModel:
     """A Gaussian Mixture Model representation that allows for the extraction of the probabilistic 
     parameters of the underlying Gaussian mixture distribution to a set of demonstrations.
 
-    source: "On Learning, Representing and Generalizing a Task in a Humanoid Robot", 
+    based on: "On Learning, Representing and Generalizing a Task in a Humanoid Robot", 
     Calinon et al., 2007
 
     Parameters

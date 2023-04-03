@@ -4,33 +4,28 @@ import logging
 import math
 import numpy as np
 
-from scipy.linalg import block_diag
-
 class KMP:
     """Trajectory imitation and adaptation using Kernelized Movement Primitives.
 
     Parameters
     ----------
-    l : int, default=1
+    l : int, default=0.5
         Lambda regularization factor for the mean minimization problem.
-    lc : int, default=60
+    lc : int, default=100
         Lambda_c regularization factor for the covariance minimization problem.
-    tol : float, default=2e-3
+    tol : float, default=0.0005
         Tolerance for the discrimination of conflicting points.
-    kernel_delta : float, default=0.001
-        Coefficient for the discrete derivative.
     kernel_gamma : int, default=6
         Coefficient for the rbf kernel. 
     priorities : array-like of shape (n_trajectories,), default=None
         Functions that map the input space into a priority value for trajectory superposition.
     """
-    def __init__(self, l=0.5, lc=100, tol=0.0005, kernel_delta=0.0001, kernel_gamma=6, priorities=None) -> None:
+    def __init__(self, l=0.5, lc=100, tol=0.0005, kernel_gamma=6, priorities=None) -> None:
         self.__logger = logging.getLogger(__name__)
         self.trained = False
         self.l = l
         self.lc = lc
         self.tol = tol
-        self.kernel_delta = kernel_delta
         self.kernel_gamma = kernel_gamma
         self.priorities = priorities
 
@@ -82,28 +77,14 @@ class KMP:
         kernel : array-like of shape (n_features,n_features)
             The kernel matrix evaluated in the provided input pair.
         """
-        # Radial basis function kernel
-        """s1dt = s1 + self.kernel_delta
-        s2dt = s2 + self.kernel_delta"""
-        kt_t = np.exp(-self.kernel_gamma*(s1-s2)**2)
-        """kt_dt_tmp = np.exp(-self.kernel_gamma*(s1-s2dt)**2)
-        kdt_t_tmp = np.exp(-self.kernel_gamma*(s1dt-s2)**2)
-        kdt_dt_tmp = np.exp(-self.kernel_gamma*(s1dt-s2dt)**2)
-        kt_dt = (kt_dt_tmp - kt_t)/self.kernel_delta
-        kdt_t = (kdt_t_tmp - kt_t)/self.kernel_delta
-        kdt_dt = (kdt_dt_tmp - kdt_t_tmp - kt_dt_tmp + kt_t)/self.kernel_delta**2       
-        kernel = np.zeros((self.O,self.O))
-        dim2 = int(self.O/2)
-        for i in range(dim2):
-            kernel[i,i] = kt_t
-            kernel[i,i+dim2] = kt_dt if dim2 == 2 else 0
-            kernel[i+dim2,i] = kdt_t if dim2 == 2 else 0
-            kernel[i+dim2,i+dim2] = kdt_dt if dim2 == 2 else kt_t"""
-        kernel = np.eye(self.O)*kt_t
+        # Note that we use only the upper 2x2 part of the kernel matrix defined in the paper, because
+        # we only consider the position as output, in order to dynamically set waypoints. If velocity
+        # adaptation is needed, this function should be rewritten accordingly.
+        kernel = np.eye(self.O)*np.exp(-self.kernel_gamma*(s1-s2)**2)
         return kernel
                 
     def fit(self, X, Y, var):
-        """Train the model by computing the estimator matrices for the mean (K+lambda*sigma)^-1 and 
+        """"Train" the model by computing the estimator matrices for the mean (K+lambda*sigma)^-1 and 
         for the covariance (K+lambda_c*sigma)^-1. The n_trajectories axis of the arguments is 
         considered only if the `self.priorities` parameter is not None.
 
@@ -144,6 +125,7 @@ class KMP:
                 self.xi[:,n] = self.sigma[:,:,n]@self.xi[:,n]
         k_mean = np.zeros((self.N*self.O,self.N*self.O))
         k_covariance = np.zeros((self.N*self.O,self.N*self.O))
+        # Construct the estimators
         for i in range(self.N):
             for j in range(i,self.N):
                 kernel = self.__kernel_matrix(self.s[:,i],self.s[:,j])
