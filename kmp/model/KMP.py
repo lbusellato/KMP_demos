@@ -77,9 +77,7 @@ class KMP:
         kernel : array-like of shape (n_features,n_features)
             The kernel matrix evaluated in the provided input pair.
         """
-        # Note that we use only the upper 2x2 part of the kernel matrix defined in the paper, because
-        # we only consider the position as output, in order to dynamically set waypoints. If velocity
-        # adaptation is needed, this function should be rewritten accordingly.
+        # Note that we use only the upper 3x3 part of the kernel matrix defined in the paper
         kernel = np.eye(self.O)*np.exp(-self.kernel_gamma*(s1-s2)**2)
         return kernel
                 
