@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-from kmp import UI
-
 import logging
 # Set up logging
 logging.basicConfig(
@@ -9,10 +7,17 @@ logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
     datefmt='%Y-%m-%d,%H:%M:%S'
 )
+import sys
 
-def main():
-    ui = UI()
+from kmp import demo1, demo2
+
+def main(demo):
+    if demo == '1':
+        d = demo1()
+    if demo == '2':
+        d = demo2()
     input()
 
 if __name__=='__main__':
-    main()
+    demo = sys.argv[-1] if len(sys.argv) > 1 else None
+    main(demo)

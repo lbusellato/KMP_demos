@@ -1,1 +1,1 @@
-from .UI import UI
+from .demos import demo1, demo2
