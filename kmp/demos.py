@@ -8,6 +8,7 @@ import os
 from kmp import utils
 from kmp.mixture import GaussianMixtureModel
 from kmp.model import KMP1, KMP
+from kmp.types.quaternion import quaternion
 from matplotlib.patches import Ellipse
 from matplotlib.widgets import Button, TextBox
     
@@ -186,12 +187,12 @@ class demo2:
     # Generalized orientation learning with KMP
     def __init__(self) -> None:
         self.__logger = logging.getLogger(__name__)
-        dataset_path = os.path.join(os.getcwd() + '/quaternion_trajectories/pose_data.npy')
+        dataset_path = os.path.join(os.getcwd() + '/quaternion_trajectories/pose_dataf.npy')
         if not os.path.isfile(dataset_path):
             path = os.path.join(os.getcwd() + '/quaternion_trajectories/')
             self.demos = utils.create_dataset(path,subsample=50)
         else:
-            self.demos = np.load(dataset_path)
+            self.demos = np.load(dataset_path, allow_pickle=True)
         self.fig, self.axs = plt.subplots(3,3,figsize=(10,8))
         self.axs[0,0].set_title('Real data')
         self.axs[0,0].grid()
@@ -206,19 +207,19 @@ class demo2:
         self.axs[2,1].grid()
         self.axs[2,2].grid()
         demo_num = 6
-        demo_len = int(self.demos.shape[0]/demo_num)
-        time = self.demos[0:demo_len,0]
+        demo_len = int(len(self.demos)/demo_num)
         for j in range(demo_num):
-            x = self.demos[j*demo_len:(j+1)*demo_len,1]
-            y = self.demos[j*demo_len:(j+1)*demo_len,2]
-            z = self.demos[j*demo_len:(j+1)*demo_len,3]
-            q1 = self.demos[j*demo_len:(j+1)*demo_len,4]
-            q2 = self.demos[j*demo_len:(j+1)*demo_len,5]
-            q3 = self.demos[j*demo_len:(j+1)*demo_len,6]
-            qs = self.demos[j*demo_len:(j+1)*demo_len,7]
-            qx = self.demos[j*demo_len:(j+1)*demo_len,8]
-            qy = self.demos[j*demo_len:(j+1)*demo_len,9]
-            qz = self.demos[j*demo_len:(j+1)*demo_len,10]
+            time = [s.time for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
+            x = [s.pose[0] for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
+            y = [s.pose[1] for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
+            z = [s.pose[2] for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
+            q1 = [s.quat_eucl[0] for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
+            q2 = [s.quat_eucl[1] for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
+            q3 = [s.quat_eucl[2] for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
+            qx = [s.quat[1] for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
+            qy = [s.quat[2] for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
+            qz = [s.quat[3] for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
+            qs = [s.quat[0] for i,s in enumerate(self.demos) if i >= j*demo_len and i < (j+1)*demo_len]
             if j == 0:
                 self.axs[0,0].plot(time,x,color='red',label='x')
                 self.axs[0,0].plot(time,y,color='green',label='y')
@@ -246,10 +247,10 @@ class demo2:
         self.axs[2,0].legend()
         # GMM and KMP on the position
         gmm = GaussianMixtureModel(n_demos=demo_num)
-        time = self.demos[:,0].reshape(1,-1)
-        pos = self.demos[:,1:4].T
+        time = np.array([s.time for s in self.demos]).reshape(1,-1)
+        pos = np.vstack([s.pose[:3] for s in self.demos]).T
         gmm.fit(time,pos)
-        time_single = 0.01*np.arange(1,demo_len).reshape(1,-1)
+        time_single = np.array([s.time for i,s in enumerate(self.demos) if i < demo_len]).reshape(1,-1)
         mu_pos, sigma_pos = gmm.predict(time_single)
         # Learning
         kmp_pos = KMP(l=1)
@@ -266,8 +267,8 @@ class demo2:
         self.plot_mean(self.axs[0,2],time_single.T,mu_pos_kmp_ad)
         # GMM and KMP on the quaternions
         gmm_quat = GaussianMixtureModel(n_demos=demo_num)
-        quat = self.demos[:,4:7].T
-        gmm_quat.fit(time,quat)
+        xi = np.vstack([s.quat_eucl for s in self.demos]).T
+        gmm_quat.fit(time,xi)
         mu_quat, sigma_quat = gmm_quat.predict(time_single)
         # Learning
         kmp_quat = KMP(l=1)
@@ -276,30 +277,30 @@ class demo2:
         self.plot_mean(self.axs[2,1],time_single.T,mu_quat_kmp)
         # Project the results back into quaternion space
         mu_quat_kmp = np.vstack((mu_quat_kmp,np.zeros_like(mu_quat_kmp[0,:])))
-        qa = np.array(self.demos[0,-4:])
+        # Recover the auxiliary quaternion
+        qa = self.demos[0].quat
+        quats = np.vstack([s.quat for s in self.demos])
+        qa = np.mean(quats,axis=0)[0]
         for i in range(mu_quat_kmp.shape[1]):
-            tmp = utils.exp(mu_quat_kmp[:,i])
-            mu_quat_kmp[:,i] = utils.quat_mul(tmp, qa) 
+            tmp = quaternion.exp(mu_quat_kmp[:3,i])
+            mu_quat_kmp[:,i] = (tmp*qa).as_array()
         self.plot_mean(self.axs[1,1],time_single.T,mu_quat_kmp)
         # Adaptation
-        kmp_quat_ad = KMP(l=10)
+        kmp_quat_ad = KMP(l=1)
         kmp_quat_ad.fit(time_single,mu_quat,sigma_quat)
         # Project to euclidean space
-        des_quat = np.array([0.3,0.4,-0.2,-0.6])
-        des_quat = des_quat/np.linalg.norm(des_quat)
-        self.axs[1,2].scatter([1,1,1,1],des_quat)
-        waypoint = utils.quat_mul(des_quat,qa)
-        waypoint = utils.log(waypoint)
+        des_quat = quaternion(-0.2,np.array([0.8,0.4,-1.6])).normalize()
+        self.axs[1,2].scatter([1,1,1,1],des_quat.as_array(),marker='+')
+        waypoint = (des_quat*qa).log()
         kmp_quat_ad.set_waypoint([1],waypoint.reshape(1,-1),np.eye(3)*1e-6)
-        self.axs[2,2].scatter([1,1,1],waypoint)
+        self.axs[2,2].scatter([1,1,1],waypoint,marker='+')
         mu_quat_kmp_ad, sigma_quat_kmp_ad = kmp_quat_ad.predict(time_single)
         self.plot_mean(self.axs[2,2],time_single.T,mu_quat_kmp_ad)
         # Project the results back into quaternion space
         mu_quat_kmp_ad = np.vstack((mu_quat_kmp_ad,np.zeros_like(mu_quat_kmp_ad[0,:])))
-        qa = np.array(self.demos[0,-4:])
         for i in range(mu_quat_kmp_ad.shape[1]):
-            tmp = utils.exp(mu_quat_kmp_ad[:,i])
-            mu_quat_kmp_ad[:,i] = utils.quat_mul(tmp, qa) 
+            tmp = quaternion.exp(mu_quat_kmp_ad[:3,i])
+            mu_quat_kmp_ad[:,i] = (tmp*qa).as_array()
         self.plot_mean(self.axs[1,2],time_single.T,mu_quat_kmp_ad)
         self.axs[0,0].set_xlim(0,time[0,-1])
         self.axs[0,0].set_ylim(-1.5,1.5)

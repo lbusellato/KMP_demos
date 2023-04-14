@@ -62,14 +62,35 @@ class KMP:
         # Refit the model with the new data
         self.fit(self.s, self.xi, self.sigma)
 
-    def __kernel_matrix(self, s1, s2):
+    def __kernel(self, t1, t2, gamma):
+        """Computes the Gaussian kernel function for the given input pair
+
+        Parameters
+        ----------
+        t1 : float
+            The first input.
+        t2 : float
+            The second input.
+        gamma : float
+            l term in the exponential. Must be strictly positive.
+
+        Returns
+        -------
+        kernel : float
+                The result of the evaluation.
+        """
+        if gamma <= 0:
+            raise ValueError('gamma must be strictly positive.')
+        return np.exp(-gamma*(t1-t2)**2)
+
+    def __kernel_matrix(self, t1, t2):
         """Computes the kernel matrix for the given input pair.
 
         Parameters
         ----------
-        s1 : array-like of shape (n_features)
+        t1 : float
             The first input.
-        s2 : array-like of shape (n_features)
+        t2 : float
             The second input.
 
         Returns
@@ -77,9 +98,7 @@ class KMP:
         kernel : array-like of shape (n_features,n_features)
             The kernel matrix evaluated in the provided input pair.
         """
-        # Note that we use only the upper 3x3 part of the kernel matrix defined in the paper
-        kernel = np.eye(self.O)*np.exp(-self.kernel_gamma*(s1-s2)**2)
-        return kernel
+        return np.eye(self.O)*self.__kernel(t1,t2,self.kernel_gamma)
                 
     def fit(self, X, Y, var):
         """"Train" the model by computing the estimator matrices for the mean (K+lambda*sigma)^-1 and 
