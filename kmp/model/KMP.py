@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 
 import logging
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
+    datefmt='%Y-%m-%d,%H:%M:%S'
+)
 import math
 import numpy as np
+from numpy.typing import ArrayLike
+from typing import Type, Tuple
 
 class KMP:
     """Trajectory imitation and adaptation using Kernelized Movement Primitives.
@@ -11,7 +19,7 @@ class KMP:
     ----------
     l : int, default=0.5
         Lambda regularization factor for the mean minimization problem.
-    lc : int, default=100
+    lc : int, default=10
         Lambda_c regularization factor for the covariance minimization problem.
     tol : float, default=0.0005
         Tolerance for the discrimination of conflicting points.
@@ -20,16 +28,32 @@ class KMP:
     priorities : array-like of shape (n_trajectories,), default=None
         Functions that map the input space into a priority value for trajectory superposition.
     """
-    def __init__(self, l=0.5, lc=100, tol=0.0005, kernel_gamma=6, priorities=None) -> None:
-        self.__logger = logging.getLogger(__name__)
+    def __init__(self: Type['KMP'], 
+                 l: float=0.5, 
+                 lc: int=10, 
+                 tol: float=0.0005, 
+                 kernel_gamma: int=6, 
+                 priorities: ArrayLike=None) -> None:
+        if l <= 0:
+            raise ValueError('l must be strictly positive.')
+        if lc <= 0:
+            raise ValueError('lc must be strictly positive.')
+        if tol <= 0:
+            raise ValueError('tol must be strictly positive.')
+        if kernel_gamma <= 0:
+            raise ValueError('kernel_gamma must be strictly positive.')
         self.trained = False
         self.l = l
         self.lc = lc
         self.tol = tol
         self.kernel_gamma = kernel_gamma
         self.priorities = priorities
+        self.__logger = logging.getLogger(__name__)
 
-    def set_waypoint(self, s, xi, sigma):
+    def set_waypoint(self: Type['KMP'], 
+                     s: ArrayLike, 
+                     xi: ArrayLike, 
+                     sigma: ArrayLike) -> None:
         """Adds a waypoint to the database, checking for conflicts.
 
         Parameters
@@ -62,7 +86,10 @@ class KMP:
         # Refit the model with the new data
         self.fit(self.s, self.xi, self.sigma)
 
-    def __kernel(self, t1, t2, gamma):
+    def __kernel(self: Type['KMP'], 
+                 t1: float, 
+                 t2: float, 
+                 gamma: float) -> float:
         """Computes the Gaussian kernel function for the given input pair
 
         Parameters
@@ -83,7 +110,9 @@ class KMP:
             raise ValueError('gamma must be strictly positive.')
         return np.exp(-gamma*(t1-t2)**2)
 
-    def __kernel_matrix(self, t1, t2):
+    def __kernel_matrix(self: Type['KMP'], 
+                        t1: float, 
+                        t2: float) -> ArrayLike:
         """Computes the kernel matrix for the given input pair.
 
         Parameters
@@ -100,7 +129,10 @@ class KMP:
         """
         return np.eye(self.O)*self.__kernel(t1,t2,self.kernel_gamma)
                 
-    def fit(self, X, Y, var):
+    def fit(self: Type['KMP'], 
+            X: ArrayLike, 
+            Y: ArrayLike, 
+            var: ArrayLike) -> None:
         """"Train" the model by computing the estimator matrices for the mean (K+lambda*sigma)^-1 and 
         for the covariance (K+lambda_c*sigma)^-1. The n_trajectories axis of the arguments is 
         considered only if the `self.priorities` parameter is not None.
@@ -157,7 +189,7 @@ class KMP:
         self.__mean_estimator = np.linalg.inv(k_mean)
         self.__covariance_estimator = np.linalg.inv(k_covariance)
     
-    def predict(self, s):
+    def predict(self: Type['KMP'], s: ArrayLike) -> Tuple[ArrayLike, ArrayLike]:
         """Carry out a prediction on the mean and covariance associated to the given input.
 
         Parameters

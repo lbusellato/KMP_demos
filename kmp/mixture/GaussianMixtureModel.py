@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
 
 import logging
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
+    datefmt='%Y-%m-%d,%H:%M:%S'
+)
 import numpy as np
 REALMIN = np.finfo(np.float64).tiny # To avoid division by 0
-import warnings
 
+from kmp.cluster import Uniform, KMeans
 from numpy.linalg import inv, det
+from numpy.random import default_rng
+from numpy.typing import ArrayLike
+from typing import Type, Tuple
 
 class GaussianMixtureModel:
     """A Gaussian Mixture Model representation that allows for the extraction of the probabilistic 
@@ -17,20 +26,39 @@ class GaussianMixtureModel:
     Parameters
     ----------
     n_components : int, default=8
-        The number of mixture components.
+        The number of mixture components. If `n_components_range` is not None, then all of its 
+        elements are tried, and the one producing the smallest BIC score is kept.
 
+    n_components_range : array_like, default=None
+        Specifies the values to try when computing the optimal number of Gaussian components.
+    
     n_demos : int, default=5
         The number of demonstrations in the database.
 
     max_it : int, default=100
         Maximum number of iterations for the EM algorithm.
         
-    tol : _type_, default=1e-4
+    tol : float, default=1e-4
         Convergence criterion (lower bound for the average log-likelihood) for the EM algorithm.
+        Must be strictly positive.
 
-    reg_factor : _type_, default=1e-4
+    init_params : str, default='kmeans'
+        Method used to initialize the prior probabilities, means and covariances. Must be one of:
+            - 'uniform': The data seen during `fit` is evenly split in `n_components` clusters.
+            - 'kmeans': The data seen during `fit` is clusterized using the KMeans algorithm.
+
+    kmeans_iter : int, default=10
+        Number of iterations for the KMeans algorithm.
+
+    kmeans_tol : float, default=1e-4
+        Convergence criterion for the KMeans algorithm. Must be strictly positive.
+
+    random_state : int, default=None
+        Random seed for the random initialization of KMeans.
+
+    reg_factor : float, default=1e-4
         Regularization factor added to the diagonal of the covariance matrices to ensure they are 
-        positive definite.
+        positive definite. Must be strictly positive.
 
     Attributes
     ----------
@@ -50,7 +78,7 @@ class GaussianMixtureModel:
         Number of steps of EM to reach convergence.
 
     lower_bound_ : float
-        The lowest value of the average log-lokelihood seen during fit().
+        The lowest value of the BIC score seen during fit().
 
     n_input_features_ : int
         The input space dimension seen during fit().
@@ -70,56 +98,52 @@ class GaussianMixtureModel:
     n_samples_ : int
         The number of samples of each demonstration seen during fit().
     """
-    def __init__(self, n_components=8, 
-                       n_demos=5,
-                       max_it=100,
-                       tol=1e-4,
-                       reg_factor=1e-4) -> None:
+    def __init__(self: Type['GaussianMixtureModel'], 
+                 n_components: int=8, 
+                 n_components_range: ArrayLike=None,
+                 n_demos: int=5,
+                 max_it: int=100,
+                 tol: float=1e-4,
+                 init_params: str='kmeans',
+                 kmeans_iter: int=100,
+                 kmeans_tol: float=1e-4,
+                 random_state: int=None,
+                 reg_factor: float=1e-4) -> None:
+        # Input arguments check
+        if n_components < 0:
+            raise ValueError('n_components must be strictly positive.')
+        if n_demos < 0: 
+            raise ValueError('n_demos must be strictly positive.')
+        if max_it < 0: 
+            raise ValueError('max_it must be strictly positive.')
+        if tol < 0: 
+            raise ValueError('tol must be strictly positive.')
+        if reg_factor < 0: 
+            raise ValueError('reg_factor must be strictly positive.')
+        if kmeans_iter < 0: 
+            raise ValueError('kmeans_iter must be strictly positive.')
+        if kmeans_tol < 0: 
+            raise ValueError('kmeans_tol must be strictly positive.')
+        if init_params not in ['uniform','kmeans']:
+            raise ValueError('init_params must be either \'uniform\' or \'kmeans\'.')
         # Class attributes
         self.n_components_ = n_components
+        if n_components_range is None: n_components_range = np.array([n_components])
+        self.n_components_range = n_components_range
         self.n_demos_ = n_demos
         self.max_it = max_it
         self.tol = tol
         self.reg_factor = reg_factor
-        self.__initialized = False
+        self.init_params = init_params
+        self.kmeans_iter = kmeans_iter
+        self.kmeans_tol = kmeans_tol
+        self.rng = default_rng(random_state)
         self.__logger = logging.getLogger(__name__)
-        self.__logger.info('Instantiated GaussianMixtureModel')
 
-    def __initialize(self, X, Y):
-        """Performs the initial guess of the priors, means and covariances.
-
-        Parameters
-        ----------
-        X : array-like of shape (n_input_features, n_samples)
-            The array of input vectors.
-        Y : array-like of shape (n_output_features, n_samples)
-            The array of output vectors.
-        """
-        # Set the relevant attributes
-        self.n_input_features_ = X.shape[0]
-        self.n_output_features_ = Y.shape[0]
-        self.n_features_ = self.n_input_features_ + self.n_output_features_
-        self.n_samples_ = int(Y.shape[1]/self.n_demos_)
-        # Setup the arrays for the priors, means and covariance matrices
-        self.priors_ = np.zeros((self.n_components_)) 
-        self.means_ = np.zeros((self.n_features_,self.n_components_)) 
-        self.covariances_ = np.zeros((self.n_features_,self.n_features_,self.n_components_))
-        # Setup the dataset
-        X = np.vstack([X,Y])
-        # Evenly assign data points to each Gaussian component
-        ids_full = np.tile((np.arange(self.n_samples_)*self.n_components_/self.n_samples_).astype(int),self.n_demos_)
-        for c in range(self.n_components_):
-            ids = [i for i,val in enumerate(ids_full) if val == c]
-            # Compute priors, mean and the covariance matrix
-            self.priors_[c] = len(ids)
-            self.means_[:,c] = np.mean(X[:,ids].T,axis=0)
-            self.covariances_[:,:,c] = np.cov(X[:,ids]) + np.eye(self.n_features_)*self.reg_factor
-        # Normalize the prior probabilities
-        self.priors_ = self.priors_/np.sum(self.priors_)
-        self.__initialized = True
-        self.__logger.info('Initialized GaussianMixtureModel')
-
-    def __pdf(self, X, sigma, mu):
+    def __pdf(self: Type['GaussianMixtureModel'], 
+              X: ArrayLike, 
+              sigma: ArrayLike, 
+              mu: ArrayLike) -> ArrayLike:
         """Computes the Gaussian probability density function defined by the given mean and covariance,
         evaluated in the given points.
 
@@ -155,7 +179,12 @@ class GaussianMixtureModel:
                 pdf = np.exp(-0.5*pdf)/np.sqrt((2*np.pi)**(self.n_features_)*np.abs(det(sigma)) + REALMIN)
         return pdf
 
-    def __likelihood(self, X, sigma, mu):
+    def __likelihood(self: Type['GaussianMixtureModel'], 
+                     X: ArrayLike, 
+                     sigma: ArrayLike, 
+                     mu: ArrayLike, 
+                     priors: ArrayLike, 
+                     n_components: int) -> ArrayLike:
         """Computes the likelihood of the Gaussian distribution defined by the given mean and covariance,
         evaluated in the given points.
 
@@ -167,16 +196,45 @@ class GaussianMixtureModel:
             The variance or covariance matrix that defines the distribution.
         mu : int or array-like of shape (n_features,n_components)
             The mean vector that defines the distribution.
+        priors : int or array-like of shape (n_components)
+            The prior probabilities of each mixture component.
+        n_components : int
+            The number of mixture components.
 
         Returns
         -------
-        likelihood : array-like of shape (n_samples,n_components)
+        array-like of shape (n_samples,n_components)
             The likelihood of each sample with respect to each Gaussian component.
         """
-        likelihood = [self.priors_[c]*self.__pdf(X, sigma[:,:,c], mu[:,c]) for c in range(self.n_components_)]
-        return likelihood
+        return [priors[c]*self.__pdf(X, sigma[:,:,c], mu[:,c]) for c in range(n_components)]
 
-    def fit(self, X, Y):
+    def __bic(self: Type['GaussianMixtureModel'], 
+              X: ArrayLike, 
+              L: float, 
+              K: int) -> float:
+        """Computes the Bayesian Information Criterion (BIC) score for the given data and number of
+        Gaussian components.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_input_features, n_samples)
+            The array of input vectors.
+        L : float
+            The average log-likelihood of the model.
+        K : int
+            The number of Gaussian components.
+
+        Returns
+        -------
+        float
+            The computed BIC score.
+        """
+        N = X.shape[1]
+        D = X.shape[0]
+        n_p = (K-1) + K*(D + 0.5*D*(D+1))
+        return -L + 0.5*n_p*np.log(N)
+
+    def fit(self: Type['GaussianMixtureModel'], X: ArrayLike, Y: ArrayLike) -> None:
         """Fit the model using the Expectation-Maximization algorithm.
 
         Parameters
@@ -186,44 +244,79 @@ class GaussianMixtureModel:
         Y : array-like of shape (n_output_features, n_samples)
             The array of output vectors.
         """
-        # Make the initial guess if it wasn't already made
-        if not self.__initialized : self.__initialize(X, Y)
-        # Construct the dataset
+        # Set the relevant attributes
+        self.n_input_features_ = X.shape[0]
+        self.n_output_features_ = Y.shape[0]
+        self.n_features_ = self.n_input_features_ + self.n_output_features_
+        self.n_samples_ = int(Y.shape[1]/self.n_demos_)
+        # Setup the dataset
         X = np.vstack([X,Y])
-        # Expectation-Maximization
-        LL = np.zeros(self.max_it)
-        for it in range(self.max_it):
-            # Expectation step
-            L = self.__likelihood(X, self.covariances_, self.means_)
-            # Pseudo posterior: likelihood/evidence
-            try:
-                gamma = L/np.tile(np.sum(L,axis=0),(self.n_components_,1))
-            except ZeroDivisionError:
-                gamma = L/np.tile(np.sum(L,axis=0)+REALMIN,(self.n_components_,1))
-            gamma_mean = gamma/np.tile(np.sum(gamma,axis=1),(self.n_samples_*self.n_demos_,1)).T
-            # Maximization step
-            for c in range(self.n_components_):
-                # Update priors
-                self.priors_[c] = np.sum(gamma[c])/(self.n_samples_*self.n_demos_)
-                # Update mean
-                self.means_[:,c] = X @ gamma_mean[c].T
-                # Update covariance
-                X_cntr = X.T - np.tile(self.means_[:,c],(self.n_samples_*self.n_demos_,1))
-                sigma = X_cntr.T @ np.diag(gamma_mean[c]) @ X_cntr
-                self.covariances_[:,:,c] = sigma + np.eye(self.n_features_)*self.reg_factor
-            # Average log likelihood
-            LL[it] = np.sum(np.log(np.sum(L,axis=1)))/(self.n_samples_*self.n_demos_)
-            # Check convergence
-            if it > 0 and (it >= self.max_it or np.abs(LL[it]-LL[it-1]) < self.tol):
-                self.__logger.info(f'EM converged in {it} steps')
-                self.lower_bound_ = LL[it]
-                self.n_iter_ = it
-                self.converged_ = True
-                return        
+        # Figure out the optimal number of mixture components
         self.converged_ = False
-        warnings.warn("ConvergenceWarning: EM algorithm did not converge")
+        min_bic = np.inf
+        for n_components in self.n_components_range:
+            # Setup the arrays for the priors, means and covariance matrices
+            priors = np.zeros((n_components)) 
+            means = np.zeros((self.n_features_,n_components)) 
+            covariances = np.zeros((self.n_features_,self.n_features_,n_components))
+            # Clusterization of the dataset
+            if self.init_params == 'uniform':
+                cluster = Uniform(n_components,self.n_demos_) 
+            elif self.init_params == 'kmeans':
+                cluster = KMeans(n_components,self.kmeans_iter,self.kmeans_tol)
+            labels = cluster.fit_predict(X)
+            # Initial guess for GMM
+            for c in range(n_components):
+                ids = [i for i,val in enumerate(labels) if val == c]
+                # Compute priors, mean and the covariance matrix
+                priors[c] = len(ids)
+                means[:,c] = np.mean(X[:,ids].T,axis=0)
+                covariances[:,:,c] = np.cov(X[:,ids]) + np.eye(self.n_features_)*self.reg_factor
+            # Normalize the prior probabilities
+            priors = priors/np.sum(priors)
+            # Expectation-Maximization
+            LL = np.zeros(self.max_it)
+            for it in range(self.max_it):
+                # Expectation step
+                L = self.__likelihood(X, covariances, means, priors, n_components)
+                # Pseudo posterior
+                try:
+                    gamma = L/np.tile(np.sum(L,axis=0),(n_components,1))
+                except ZeroDivisionError:
+                    gamma = L/np.tile(np.sum(L,axis=0)+REALMIN,(n_components,1))
+                gamma_mean = gamma/np.tile(np.sum(gamma,axis=1),(self.n_samples_*self.n_demos_,1)).T
+                # Maximization step
+                for c in range(n_components):
+                    # Update priors
+                    priors[c] = np.sum(gamma[c])/(self.n_samples_*self.n_demos_)
+                    # Update mean
+                    means[:,c] = X @ gamma_mean[c].T
+                    # Update covariance
+                    X_cntr = X.T - np.tile(means[:,c],(self.n_samples_*self.n_demos_,1))
+                    sigma = X_cntr.T @ np.diag(gamma_mean[c]) @ X_cntr
+                    covariances[:,:,c] = sigma + np.eye(self.n_features_)*self.reg_factor
+                # Average log likelihood
+                LL[it] = np.mean(np.log(np.sum(L,axis=1)))
+                # Check convergence
+                if it > 0 and (it >= self.max_it or np.abs(LL[it]-LL[it-1]) < self.tol):
+                    bic = self.__bic(X,LL[it],n_components)
+                    self.__logger.info(f'EM converged in {it} iterations. n_components: {n_components}, BIC: {bic}')
+                    if bic < min_bic:
+                        self.priors_ = priors
+                        self.covariances_ = covariances
+                        self.means_ = means
+                        self.n_components_ = n_components
+                        min_bic = bic
+                        self.converged_ = True
+                        self.lower_bound = min_bic
+                        self.n_iter = it
+                    break
+        if not self.converged_:
+            raise RuntimeError("EM algorithm did not converge")
+        elif len(self.n_components_range) > 1:
+            self.__logger.info(f'Optimal components: {self.n_components_}')
 
-    def predict(self, X):
+    def predict(self: Type['GaussianMixtureModel'], X: ArrayLike) -> Tuple[ArrayLike, ArrayLike]:
         """Predict the expected output using Gaussian Mixture Regression.
 
         Parameters

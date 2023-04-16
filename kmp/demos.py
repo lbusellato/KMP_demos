@@ -7,11 +7,13 @@ import os
 
 from kmp import utils
 from kmp.mixture import GaussianMixtureModel
-from kmp.model import KMP1, KMP
+from kmp.model import KMP
 from kmp.types.quaternion import quaternion
 from matplotlib.patches import Ellipse
 from matplotlib.widgets import Button, TextBox
     
+#TODO: clean up everything, make it more readable
+
 class demo1:
     # Interactive KMP learning, adaptation and superposition demo
     def __init__(self) -> None:
@@ -159,19 +161,19 @@ class demo1:
                 self.kmp_dt = 0.01
                 time = self.kmp_dt*np.arange(1,int(N/H)+1).reshape(1,-1)
                 # Set up the first KMP
-                self.kmp1 = KMP1()
+                self.kmp1 = KMP()
                 self.kmp1.fit(time, self.mu, self.sigma)
                 self.mu_kmp1, self.sigma_kmp1 = self.kmp1.predict(time)
                 self.axs[1,0].plot(self.mu[0],self.mu[1],color='gray')
                 self.plot_gmm(self.axs[1,0], self.mu_kmp1[:2,:], self.sigma_kmp1[:2,:2,:])
                 # Set up the second KMP
-                self.kmp2 = KMP1()
+                self.kmp2 = KMP()
                 self.kmp2.fit(time,self.mu,self.sigma)
                 self.mu_kmp2, self.sigma_kmp2 = self.kmp2.predict(0.01*np.arange(1,int(N/H)+1).reshape(1,-1))
                 self.axs[1,1].plot(self.mu[0],self.mu[1],color='gray')
                 self.plot_gmm(self.axs[1,1], self.mu_kmp2[:2,:], self.sigma_kmp2[:2,:2,:])
                 # Setup the superposition KMP
-                self.kmp_sup = KMP1(priorities=[self.p1,self.p2])
+                self.kmp_sup = KMP(priorities=[self.p1,self.p2])
                 self.kmp_sup.fit(time,[self.mu_kmp1, self.mu_kmp2], [self.sigma_kmp1, self.sigma_kmp2])
                 mu_kmp_sup, sigma_kmp_sup = self.kmp_sup.predict(time)
                 self.axs[1,2].plot(self.mu[0],self.mu[1],color='gray')
@@ -187,7 +189,7 @@ class demo2:
     # Generalized orientation learning with KMP
     def __init__(self) -> None:
         self.__logger = logging.getLogger(__name__)
-        dataset_path = os.path.join(os.getcwd() + '/quaternion_trajectories/pose_dataf.npy')
+        dataset_path = os.path.join(os.getcwd() + '/quaternion_trajectories/pose_data.npy')
         if not os.path.isfile(dataset_path):
             path = os.path.join(os.getcwd() + '/quaternion_trajectories/')
             self.demos = utils.create_dataset(path,subsample=50)
@@ -246,7 +248,7 @@ class demo2:
         self.axs[1,0].legend()
         self.axs[2,0].legend()
         # GMM and KMP on the position
-        gmm = GaussianMixtureModel(n_demos=demo_num)
+        gmm = GaussianMixtureModel(n_demos=demo_num)#,n_components_range=np.arange(1,20))
         time = np.array([s.time for s in self.demos]).reshape(1,-1)
         pos = np.vstack([s.pose[:3] for s in self.demos]).T
         gmm.fit(time,pos)
@@ -278,7 +280,6 @@ class demo2:
         # Project the results back into quaternion space
         mu_quat_kmp = np.vstack((mu_quat_kmp,np.zeros_like(mu_quat_kmp[0,:])))
         # Recover the auxiliary quaternion
-        qa = self.demos[0].quat
         quats = np.vstack([s.quat for s in self.demos])
         qa = np.mean(quats,axis=0)[0]
         for i in range(mu_quat_kmp.shape[1]):
@@ -302,24 +303,10 @@ class demo2:
             tmp = quaternion.exp(mu_quat_kmp_ad[:3,i])
             mu_quat_kmp_ad[:,i] = (tmp*qa).as_array()
         self.plot_mean(self.axs[1,2],time_single.T,mu_quat_kmp_ad)
-        self.axs[0,0].set_xlim(0,time[0,-1])
-        self.axs[0,0].set_ylim(-1.5,1.5)
-        self.axs[0,1].set_xlim(0,time[0,-1])
-        self.axs[0,1].set_ylim(-1.5,1.5)
-        self.axs[0,2].set_xlim(0,time[0,-1])
-        self.axs[0,2].set_ylim(-1.5,1.5)
-        self.axs[1,0].set_xlim(0,time[0,-1])
-        self.axs[1,0].set_ylim(-1.5,1.5)
-        self.axs[1,1].set_xlim(0,time[0,-1])
-        self.axs[1,1].set_ylim(-1.5,1.5)
-        self.axs[1,2].set_xlim(0,time[0,-1])
-        self.axs[1,2].set_ylim(-1.5,1.5)
-        self.axs[2,0].set_xlim(0,time[0,-1])
-        self.axs[2,0].set_ylim(-1.5,1.5)
-        self.axs[2,1].set_xlim(0,time[0,-1])
-        self.axs[2,1].set_ylim(-1.5,1.5)
-        self.axs[2,2].set_xlim(0,time[0,-1])
-        self.axs[2,2].set_ylim(-1.5,1.5)
+        for row in self.axs: 
+            for ax in row:
+                ax.set_xlim(0,time[0,-1])
+                ax.set_ylim(-1.5,1.5)
         self.fig.show()
 
     def plot_mean(self, ax, time, mu):

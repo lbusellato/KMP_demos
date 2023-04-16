@@ -13,9 +13,9 @@ from kmp import demo1, demo2
 
 def main(demo):
     if demo == '1':
-        d = demo1()
+        demo1()
     if demo == '2':
-        d = demo2()
+        demo2()
     input()
 
 if __name__=='__main__':
