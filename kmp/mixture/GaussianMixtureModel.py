@@ -7,6 +7,7 @@ logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
     datefmt='%Y-%m-%d,%H:%M:%S'
 )
+import matplotlib.pyplot as plt
 import numpy as np
 REALMIN = np.finfo(np.float64).tiny # To avoid division by 0
 
@@ -53,6 +54,9 @@ class GaussianMixtureModel:
     kmeans_tol : float, default=1e-4
         Convergence criterion for the KMeans algorithm. Must be strictly positive.
 
+    model_selection_tol : float, default=25
+        Tolerance for the selection of the optimal number of Gaussian components.    
+    
     random_state : int, default=None
         Random seed for the random initialization of KMeans.
 
@@ -76,9 +80,6 @@ class GaussianMixtureModel:
 
     n_iter_ : int
         Number of steps of EM to reach convergence.
-
-    lower_bound_ : float
-        The lowest value of the BIC score seen during fit().
 
     n_input_features_ : int
         The input space dimension seen during fit().
@@ -107,6 +108,7 @@ class GaussianMixtureModel:
                  init_params: str='kmeans',
                  kmeans_iter: int=100,
                  kmeans_tol: float=1e-4,
+                 model_selection_tol: float=25,
                  random_state: int=None,
                  reg_factor: float=1e-4) -> None:
         # Input arguments check
@@ -137,6 +139,7 @@ class GaussianMixtureModel:
         self.init_params = init_params
         self.kmeans_iter = kmeans_iter
         self.kmeans_tol = kmeans_tol
+        self.model_selection_tol = model_selection_tol
         self.rng = default_rng(random_state)
         self.__logger = logging.getLogger(__name__)
 
@@ -171,8 +174,8 @@ class GaussianMixtureModel:
                 pdf = np.exp(-0.5*pdf)/np.sqrt(2*np.pi*np.abs(sigma)+REALMIN)
         else:
             # Multivariate case
-            X_cntr = np.asarray(X).T - np.tile(np.asarray(mu).T,(self.n_demos_*self.n_samples_,1))
-            pdf = np.sum(X_cntr@inv(sigma)*X_cntr, axis=1)
+            X_cntr = X - np.tile(mu,(self.n_demos_*self.n_samples_,1)).T
+            pdf = np.sum(X_cntr.T@inv(sigma)*X_cntr.T, axis=1)
             try:
                 pdf = np.exp(-0.5*pdf)/np.sqrt((2*np.pi)**(self.n_features_)*np.abs(det(sigma)))
             except ZeroDivisionError:
@@ -231,8 +234,36 @@ class GaussianMixtureModel:
         """
         N = X.shape[1]
         D = X.shape[0]
-        n_p = (K-1) + K*(D + 0.5*D*(D+1))
-        return -L + 0.5*n_p*np.log(N)
+        # Number of parameters
+        n_p = (K-1)+K*(D+0.5*D*(D+1))
+        return -2*L*N + n_p*np.log(N)
+
+    def __aic(self: Type['GaussianMixtureModel'], 
+              X: ArrayLike, 
+              L: float, 
+              K: int) -> float:
+        """Computes the Akaike Information Criterion (AIC) score for the given data and number of
+        Gaussian components.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_input_features, n_samples)
+            The array of input vectors.
+        L : float
+            The average log-likelihood of the model.
+        K : int
+            The number of Gaussian components.
+
+        Returns
+        -------
+        float
+            The computed BIC score.
+        """
+        N = X.shape[1]
+        D = X.shape[0]
+        # Number of parameters
+        n_p = (K-1)+K*(D+0.5*D*(D+1))
+        return -2*L*N + 2*n_p*N/(N-n_p-1)
 
     def fit(self: Type['GaussianMixtureModel'], X: ArrayLike, Y: ArrayLike) -> None:
         """Fit the model using the Expectation-Maximization algorithm.
@@ -253,7 +284,9 @@ class GaussianMixtureModel:
         X = np.vstack([X,Y])
         # Figure out the optimal number of mixture components
         self.converged_ = False
-        min_bic = np.inf
+        # Model selection
+        bics = []
+        ddbics = []
         for n_components in self.n_components_range:
             # Setup the arrays for the priors, means and covariance matrices
             priors = np.zeros((n_components)) 
@@ -296,25 +329,82 @@ class GaussianMixtureModel:
                     sigma = X_cntr.T @ np.diag(gamma_mean[c]) @ X_cntr
                     covariances[:,:,c] = sigma + np.eye(self.n_features_)*self.reg_factor
                 # Average log likelihood
-                LL[it] = np.mean(np.log(np.sum(L,axis=1)))
+                LL[it] = np.mean(np.log(np.sum(L,axis=0)))
                 # Check convergence
                 if it > 0 and (it >= self.max_it or np.abs(LL[it]-LL[it-1]) < self.tol):
-                    bic = self.__bic(X,LL[it],n_components)
-                    self.__logger.info(f'EM converged in {it} iterations. n_components: {n_components}, BIC: {bic}')
-                    if bic < min_bic:
-                        self.priors_ = priors
-                        self.covariances_ = covariances
-                        self.means_ = means
-                        self.n_components_ = n_components
-                        min_bic = bic
-                        self.converged_ = True
-                        self.lower_bound = min_bic
-                        self.n_iter = it
+                    bics.append(self.__bic(X,LL[it],n_components))
+                    if len(bics) > 1:
+                        ddbics = np.gradient(np.gradient(bics))
                     break
+        if len(ddbics) > 0:
+            fig, ax = plt.subplots(1,1,figsize=(6,4))
+            n_components = np.argwhere(np.abs(ddbics<self.model_selection_tol))[0]
+            n_components = n_components[0]
+            ax.plot(np.arange(1,len(bics)+1),bics)
+            ax.scatter(np.arange(1,len(bics)+1),bics)
+            ax.scatter(n_components,bics[n_components],c='r')
+            ax.set_title('Model selection')
+            ax.set_xlabel('Number of components')
+            import matplotlib.ticker as plticker
+            loc = plticker.MultipleLocator(base=1.0) # this locator puts ticks at regular intervals
+            ax.xaxis.set_major_locator(loc)
+            ax.set_ylabel('BIC score')
+            ax.grid()
+            fig.show()
+        # Setup the arrays for the priors, means and covariance matrices
+        priors = np.zeros((n_components)) 
+        means = np.zeros((self.n_features_,n_components)) 
+        covariances = np.zeros((self.n_features_,self.n_features_,n_components))
+        # Clusterization of the dataset
+        if self.init_params == 'uniform':
+            cluster = Uniform(n_components,self.n_demos_) 
+        elif self.init_params == 'kmeans':
+            cluster = KMeans(n_components,self.kmeans_iter,self.kmeans_tol)
+        labels = cluster.fit_predict(X)
+        # Initial guess for GMM
+        for c in range(n_components):
+            ids = [i for i,val in enumerate(labels) if val == c]
+            # Compute priors, mean and the covariance matrix
+            priors[c] = len(ids)
+            means[:,c] = np.mean(X[:,ids].T,axis=0)
+            covariances[:,:,c] = np.cov(X[:,ids]) + np.eye(self.n_features_)*self.reg_factor
+        # Normalize the prior probabilities
+        priors = priors/np.sum(priors)
+        # Expectation-Maximization
+        LL = np.zeros(self.max_it)
+        for it in range(self.max_it):
+            # Expectation step
+            L = self.__likelihood(X, covariances, means, priors, n_components)
+            # Pseudo posterior
+            try:
+                gamma = L/np.tile(np.sum(L,axis=0),(n_components,1))
+            except ZeroDivisionError:
+                gamma = L/np.tile(np.sum(L,axis=0)+REALMIN,(n_components,1))
+            gamma_mean = gamma/np.tile(np.sum(gamma,axis=1),(self.n_samples_*self.n_demos_,1)).T
+            # Maximization step
+            for c in range(n_components):
+                # Update priors
+                priors[c] = np.sum(gamma[c])/(self.n_samples_*self.n_demos_)
+                # Update mean
+                means[:,c] = X @ gamma_mean[c].T
+                # Update covariance
+                X_cntr = X.T - np.tile(means[:,c],(self.n_samples_*self.n_demos_,1))
+                sigma = X_cntr.T @ np.diag(gamma_mean[c]) @ X_cntr
+                covariances[:,:,c] = sigma + np.eye(self.n_features_)*self.reg_factor
+            # Average log likelihood
+            LL[it] = np.mean(np.log(np.sum(L,axis=0)))
+            # Check convergence
+            if it > 0 and (it >= self.max_it or np.abs(LL[it]-LL[it-1]) < self.tol):
+                self.__logger.info(f'EM converged in {it} iterations. n_components: {n_components}, BIC: {self.__bic(X,LL[it],n_components)}')
+                self.priors_ = priors
+                self.covariances_ = covariances
+                self.means_ = means
+                self.n_components_ = n_components
+                self.converged_ = True
+                self.n_iter = it
+                break
         if not self.converged_:
             raise RuntimeError("EM algorithm did not converge")
-        elif len(self.n_components_range) > 1:
-            self.__logger.info(f'Optimal components: {self.n_components_}')
 
     def predict(self: Type['GaussianMixtureModel'], X: ArrayLike) -> Tuple[ArrayLike, ArrayLike]:
         """Predict the expected output using Gaussian Mixture Regression.

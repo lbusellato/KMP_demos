@@ -58,7 +58,7 @@ def create_dataset(path,subsample=100):
                     elif j != 0:
                         row = np.array(row,dtype=float)
                         # Convert from axis-angle to quaternion
-                        qa.append((~(quaternion.from_rotation_vector(row[cols[3:6]]))).as_array())
+                        qa.append(((quaternion.from_rotation_vector(row[cols[3:6]]))).as_array())
     qa = np.vstack(qa)
     qa = quaternion.from_array(np.mean(qa,axis=0))
     for file in files:
@@ -74,7 +74,7 @@ def create_dataset(path,subsample=100):
                         row = np.array(row,dtype=float)
                         t = j*dt
                         pose = row[cols[:6]]
-                        twist = row[cols[6:]]
+                        twist = row[cols[6:12]]
                         # Convert from axis-angle to quaternion
                         quat = quaternion.from_rotation_vector(row[cols[3:6]])
                         # Handle representation ambiguities
@@ -85,7 +85,7 @@ def create_dataset(path,subsample=100):
                             if max_prev == max_curr and np.sign(quat[max_curr]) != np.sign(prev_quat[max_prev]):
                                 sign = -sign
                         # Project to euclidean space
-                        quat_eucl = (quat*qa).log()
+                        quat_eucl = (quat*~qa).log()
                         wrench = row[cols[-6:]]
                         out.append(Point(t,pose,twist,-quat*sign,quat_eucl,wrench))
                         prev_quat = quat

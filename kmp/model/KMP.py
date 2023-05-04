@@ -26,7 +26,8 @@ class KMP:
     kernel_gamma : int, default=6
         Coefficient for the rbf kernel. 
     priorities : array-like of shape (n_trajectories,), default=None
-        Functions that map the input space into a priority value for trajectory superposition.
+        Functions that map the input space into a priority value for trajectory superposition. The 
+        sum of all priority functions evaluated in the same (any) input must be one.
     """
     def __init__(self: Type['KMP'], 
                  l: float=0.5, 
@@ -80,7 +81,7 @@ class KMP:
                 self.sigma[:,:,id] = sigma[j]
             else:
                 # Add the new point to the database
-                self.s = np.append(self.s, s[j])
+                self.s = np.append(self.s, np.array(s[j]).reshape(1,-1))
                 self.xi = np.append(self.xi, xi[j])
                 self.sigma = np.append(self.sigma, sigma[j])
         # Refit the model with the new data
@@ -90,7 +91,7 @@ class KMP:
                  t1: float, 
                  t2: float, 
                  gamma: float) -> float:
-        """Computes the Gaussian kernel function for the given input pair
+        """Computes the Gaussian kernel function for the given input pair.
 
         Parameters
         ----------
@@ -108,7 +109,7 @@ class KMP:
         """
         if gamma <= 0:
             raise ValueError('gamma must be strictly positive.')
-        return np.exp(-gamma*(t1-t2)**2)
+        return np.exp(-gamma*(t1-t2)**2)[0]
 
     def __kernel_matrix(self: Type['KMP'], 
                         t1: float, 
@@ -127,7 +128,25 @@ class KMP:
         kernel : array-like of shape (n_features,n_features)
             The kernel matrix evaluated in the provided input pair.
         """
-        return np.eye(self.O)*self.__kernel(t1,t2,self.kernel_gamma)
+        dt = 0.001
+        t1dt = t1 + dt
+        t2dt = t2 + dt
+        # Half of the output features are position, the other half velocity
+        O = int(self.O/2)
+        # Compute the kernel blocks
+        ktt = self.__kernel(t1, t2, self.kernel_gamma)
+        if self.O > 3:
+            ktd_tmp = self.__kernel(t1,t2dt,self.kernel_gamma)
+            ktd = (ktd_tmp - ktt)/dt
+            kdt_tmp = self.__kernel(t1dt,t2,self.kernel_gamma)
+            kdt = (kdt_tmp - ktt)/dt
+            kdd_tmp = self.__kernel(t1dt,t2dt,self.kernel_gamma)
+            kdd = (kdd_tmp - ktd_tmp - kdt_tmp + ktt)/dt**2
+            # Construct the kernel
+            kernel = np.block([[ktt*np.eye(O), ktd*np.eye(O)],[kdt*np.eye(O), kdd*np.eye(O)]])
+        else: # Position only output case
+            kernel = ktt*np.eye(self.O)
+        return kernel
                 
     def fit(self: Type['KMP'], 
             X: ArrayLike, 
@@ -176,19 +195,17 @@ class KMP:
         k_covariance = np.zeros((self.N*self.O,self.N*self.O))
         # Construct the estimators
         for i in range(self.N):
-            for j in range(i,self.N):
+            for j in range(self.N):
                 kernel = self.__kernel_matrix(self.s[:,i],self.s[:,j])
                 k_mean[i*self.O:(i+1)*self.O,j*self.O:(j+1)*self.O] = kernel
                 k_covariance[i*self.O:(i+1)*self.O,j*self.O:(j+1)*self.O] = kernel
                 if i == j:
-                    k_mean[j*self.O:(j+1)*self.O,i*self.O:(i+1)*self.O] += self.l*self.sigma[:,:,i]
-                    k_covariance[j*self.O:(j+1)*self.O,i*self.O:(i+1)*self.O] += self.lc*self.sigma[:,:,i]
-                else:
-                    k_mean[j*self.O:(j+1)*self.O,i*self.O:(i+1)*self.O] = kernel
-                    k_covariance[j*self.O:(j+1)*self.O,i*self.O:(i+1)*self.O] = kernel
+                    # Add the regularization terms on the diagonal
+                    k_mean[j*self.O:(j+1)*self.O,i*self.O:(i+1)*self.O] = kernel + self.l*self.sigma[:,:,i]
+                    k_covariance[j*self.O:(j+1)*self.O,i*self.O:(i+1)*self.O] = kernel + self.lc*self.sigma[:,:,i]
         self.__mean_estimator = np.linalg.inv(k_mean)
         self.__covariance_estimator = np.linalg.inv(k_covariance)
-    
+
     def predict(self: Type['KMP'], s: ArrayLike) -> Tuple[ArrayLike, ArrayLike]:
         """Carry out a prediction on the mean and covariance associated to the given input.
 
@@ -212,7 +229,8 @@ class KMP:
             Y = np.zeros(self.N*self.O)
             for i in range(self.N):
                 k[:,i*self.O:(i+1)*self.O] = self.__kernel_matrix(s[:,j],self.s[:,i])
-                Y[i*self.O:i*self.O+self.O] = self.xi[:self.O,i]
+                for h in range(self.O):
+                    Y[i*self.O+h] = self.xi[h,i]
             xi[:,j] = k@self.__mean_estimator@Y
             sigma[:,:,j] = (self.N/self.lc)*(self.__kernel_matrix(s[:,j],s[:,j]) - k@self.__covariance_estimator@k.T)
         self.__logger.info('KMP Done.')

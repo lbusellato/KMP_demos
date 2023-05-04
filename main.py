@@ -9,13 +9,17 @@ logging.basicConfig(
 )
 import sys
 
-from kmp import demo1, demo2
+from kmp import demo1, demo2, demo3, demo4
 
 def main(demo):
     if demo == '1':
         demo1()
     if demo == '2':
         demo2()
+    if demo == '3':
+        demo3()
+    if demo == '4':
+        demo4()
     input()
 
 if __name__=='__main__':

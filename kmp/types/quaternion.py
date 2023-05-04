@@ -128,6 +128,27 @@ class quaternion:
         self.v = self.v/norm
         return self
     
+    def derivative(self: 'quaternion', wh: ArrayLike, qa: 'quaternion', dt: float) -> ArrayLike:
+        """Computes the Euclidean projection of the derivative of self.
+
+        Parameters
+        ----------
+        wh : ArrayLike
+            The angular velocity associated to self.
+        qa : quaternion
+            The auxiliary quaternion.
+        dt : float
+            The timestep for the derivative.
+
+        Returns
+        -------
+        ArrayLike
+            The derivative of the Euclidean projection of self.
+        """
+        xi1 = ((self.exp(wh*dt/2)*self)*~qa).log()
+        xi2 = (self*~qa).log()
+        return (xi1 - xi2)/dt
+    
     def __add__(self: 'quaternion', q: 'quaternion') -> 'quaternion':
         """Overload the '+' operator to handle quaternion-quaternion sum.
 
