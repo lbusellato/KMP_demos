@@ -12,9 +12,162 @@ from kmp.types.quaternion import quaternion
 from matplotlib.patches import Ellipse
 from matplotlib.widgets import Button, TextBox
     
-#TODO: clean up everything, make it more readable
 
 class demo1:
+    """Kernelized Movement Primitives: learning and adaptation.
+    """
+
+    def __init__(self) -> None:
+        self.__logger = logging.getLogger(__name__)
+        # Turn on interactive figures
+        plt.ion()
+        # Set up the plots and buttons
+        self.fig, self.axs = plt.subplots(1,4,figsize=(10,8))
+        self.fig.subplots_adjust(bottom=0.2)
+        axbtn = self.fig.add_axes([0.81, 0.05, 0.1, 0.075])
+        axC = self.fig.add_axes([0.7, 0.05, 0.1, 0.075])
+        axletter = self.fig.add_axes([0.58, 0.05, 0.1, 0.075])
+        self.btn = Button(axbtn, 'Update')
+        self.btn.on_clicked(self.update)
+        self.Ctxt = TextBox(axC,'C','8')
+        self.lettertxt = TextBox(axletter,'letter','G')
+        self.fig.canvas.mpl_connect('button_press_event', self.onclick)
+        # Keep track of the added waypoints for KMP
+        self.waypoints = None
+        # Perform the first update and show the results
+        self.update(0)
+        self.fig.show() 
+
+    def plot_demos(self, ax, subsample) -> None:
+        """Plots the demonstration database on the given axis.
+        """
+        for h in range(self.gmm.n_demos):
+            coords = self.demos[h]['pos']
+            ax.plot(coords[0,::subsample],coords[1,::subsample],color='green',zorder=0)
+        ax.set_xlim(-15, 15)
+        ax.set_ylim(-15, 15)
+        ax.set_axisbelow(True)
+        ax.grid(visible=True)
+
+    def plot_gmm(self, ax, mu, sigma, color='green') -> None:
+        """Plots a trajectory defined point by point by a mean and a covariance matrix on the given 
+        axis.
+        """
+        if sigma is not None:
+            for c in range(sigma.shape[2]):
+                cov_pos = sigma[:,:,c]
+                e_vals, e_vecs = np.linalg.eig(cov_pos)
+                major_axis = 2 * np.sqrt(e_vals[0]) * e_vecs[:, 0]
+                minor_axis = 2 * np.sqrt(e_vals[1]) * e_vecs[:, 1]
+                angle = np.degrees(np.arctan2(major_axis[1], major_axis[0]))
+                pos = [mu[0,c],mu[1,c]] 
+                width = np.linalg.norm(major_axis)
+                height = np.linalg.norm(minor_axis)
+                ellipse = Ellipse(xy=pos, width=width, height=height, angle=angle, facecolor='orange', alpha=0.6,zorder=1)
+                ax.add_artist(ellipse)
+        ax.set_xlim(-15, 15)
+        ax.set_ylim(-15, 15)
+        if mu.shape[1] == self.gmm.n_components:
+            ax.scatter(mu[0],mu[1],zorder=3)
+        else:
+            ax.plot(mu[0,:],mu[1,:],color=color)
+        ax.set_axisbelow(True)
+        ax.grid(visible=True)
+
+    def onclick(self, event):
+        """Handle clicks on KMP's axis to carry out adaptation
+        """
+        axes_title = event.inaxes.axes.title._text
+        if event.key == 'control' and axes_title == "KMP":
+            x = float(event.xdata)
+            y = float(event.ydata)
+            p = np.array([x,y]).reshape(1,-1)
+            dt = self.kmp_dt
+            id = utils.find_closest_index(self.mu[:2,:],p)
+            t = dt*(id+1)
+            self.__logger.info('Inserting new point x=%.2f, y=%.2f, t=%.2f' % (event.xdata, event.ydata, t))
+            time = self.kmp_dt*np.arange(1,int(self.N/self.H)+1).reshape(1,-1)
+            var = np.eye(2)*1e-4
+            p = np.array([x,y]).reshape(1,-1)
+            # Clear the plot, plot again GMR's reference
+            self.axs[3].cla()
+            self.axs[3].plot(self.mu[0],self.mu[1],color='gray')
+            # Update the prediction with KMP
+            self.kmp.set_waypoint([t],[p],[var])
+            self.waypoints = p[:2] if self.waypoints is None else np.vstack((self.waypoints,p[:2]))
+            self.mu_kmp, self.sigma_kmp = self.kmp.predict(time)
+            # Plot the result, including the location of the waypoint
+            self.plot_gmm(self.axs[3], self.mu_kmp, self.sigma_kmp)
+            self.axs[3].scatter(self.waypoints[:,0],self.waypoints[:,1])
+            # Make the plot nicer looking
+            self.axs[3].set_axisbelow(True)
+            self.axs[3].grid(visible=True)
+            self.axs[3].set_title('KMP')
+
+    def update(self, event):
+        # Clear previous plots and the waypoint arrays
+        self.axs[0].cla()
+        self.axs[1].cla()
+        self.axs[2].cla()
+        self.axs[3].cla()
+        self.waypoints = None
+        # Extract the demonstrations for the given letter
+        if str.isnumeric(self.Ctxt.text): 
+            C = int(self.Ctxt.text) # Number of Gaussian components
+            letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 
+                    'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R',
+                    'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
+            letter = str.upper(self.lettertxt.text)
+            if letter in letters:
+
+                # Load the letter data from the MATLAB struct
+                path = os.getcwd() + '/2Dletters/' + letter + '.mat'
+                self.demos = utils.read_struct(path,max_cell=5)
+                # Extract the position data
+                pos = np.concatenate([d['pos'] for d in self.demos], axis=1)
+                # Reducing sample size affects sligthly accuracy, but greatly improves performance
+                subsample = 4 # Keep 25% of samples
+                pos = pos[:, ::subsample]
+                self.N = pos.shape[1] # Length of each demonstration
+                self.H = 5 # Number of demonstrations
+
+                # Prepare the data for the GMM and GMR (input: time, output: position)
+                dt = 0.01
+                time = dt*np.tile(np.linspace(1,int(self.N/self.H),int(self.N/self.H)),self.H).reshape(1,-1)
+                X = np.vstack((time, pos)).T # Transpose to have shape (n_features, n_samples)
+                x_gmr = dt*np.arange(int(self.N/self.H)).reshape(1,-1) # Input for GMR
+
+                # Train the GMM and make a prediction using GMR
+                self.gmm = GaussianMixtureModel(n_components=C, diag_reg_factor=1e-6)
+                self.gmm.fit(X)
+                self.mu, self.sigma = self.gmm.predict(x_gmr)
+
+                # Plot the results
+                self.plot_gmm(self.axs[1], self.gmm.means[1:3,:], self.gmm.covariances[1:3,1:3,:])
+                self.plot_gmm(self.axs[2], self.mu[:2,:], self.sigma[:2,:2,:])
+                # Plot the demonstration database
+                self.plot_demos(self.axs[0], subsample)
+                self.plot_demos(self.axs[1], subsample)
+
+                # Prepare the data for KMP
+                self.kmp_dt = 0.01
+                time = self.kmp_dt*np.arange(1,int(self.N/self.H)+1).reshape(1,-1)
+
+                # Set up KMP
+                self.kmp = KMP()
+                self.kmp.fit(time, self.mu, self.sigma)
+                self.mu_kmp, self.sigma_kmp = self.kmp.predict(time)
+                
+                # Plot KMP's results
+                self.axs[3].plot(self.mu[0],self.mu[1],color='gray')
+                self.plot_gmm(self.axs[3], self.mu_kmp[:2,:], self.sigma_kmp[:2,:2,:])
+                
+                self.axs[0].set_title('Demonstration database')
+                self.axs[1].set_title('GMM')
+                self.axs[2].set_title('GMR')
+                self.axs[3].set_title('KMP')
+
+class olddemo1:
     # Interactive KMP learning, adaptation and superposition demo
     def __init__(self) -> None:
         self.__logger = logging.getLogger(__name__)

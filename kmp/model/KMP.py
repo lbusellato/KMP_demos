@@ -30,10 +30,10 @@ class KMP:
         sum of all priority functions evaluated in the same (any) input must be one.
     """
     def __init__(self: Type['KMP'], 
-                 l: float=0.5, 
+                 l: float=1e-4, 
                  lc: int=10, 
                  tol: float=0.0005, 
-                 kernel_gamma: int=6, 
+                 kernel_gamma: int=25, 
                  priorities: ArrayLike=None) -> None:
         if l <= 0:
             raise ValueError('l must be strictly positive.')

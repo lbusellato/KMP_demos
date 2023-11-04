@@ -9,7 +9,7 @@
             "name": "Demo 1",
             "type": "python",
             "request": "launch",
-            "program": "/home/buse/Desktop/Thesis/KMP/main.py",
+            "program": "/home/buse/Desktop/KMP_demos/main.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args" : ["1"]
@@ -18,7 +18,7 @@
             "name": "Demo 2",
             "type": "python",
             "request": "launch",
-            "program": "/home/buse/Desktop/Thesis/KMP/main.py",
+            "program": "/home/buse/Desktop/KMP_demos/main.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args" : ["2"]
@@ -27,7 +27,7 @@
             "name": "Demo 3",
             "type": "python",
             "request": "launch",
-            "program": "/home/buse/Desktop/Thesis/KMP/main.py",
+            "program": "/home/buse/Desktop/KMP_demos/main.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args" : ["3"]
@@ -36,7 +36,7 @@
             "name": "Demo 4",
             "type": "python",
             "request": "launch",
-            "program": "/home/buse/Desktop/Thesis/KMP/main.py",
+            "program": "/home/buse/Desktop/KMP_demos/main.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args" : ["4"]
