@@ -27,7 +27,7 @@ The demo implements orientation learning with KMP [[2](#references)]. The code l
 
 # References
 
-#### [1] KMP: learning, adaptation, superposition and extrapolaton. 
+#### [1] KMP: learning and adaptation. 
 [[Link to publication]](https://www.researchgate.net/publication/319349682_Kernelized_Movement_Primitives)
 ```
 @Article{Huang19IJRR,

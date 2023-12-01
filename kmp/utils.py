@@ -42,25 +42,10 @@ def create_dataset(path,subsample=100):
     cols = []
     out = []
     prev_quat = None
-    qa = []
+    qa = None
     dt = 0.01/subsample
     sign = 1
     files = [f for f in os.listdir(path) if f != 'pose_data.npy' and os.path.isfile(os.path.join(path, f))]
-    for file in files:
-        with open(os.path.join(path, file)) as csv_file:
-            reader = csv.reader(csv_file, delimiter=' ')
-            for (j,row) in enumerate(reader):
-                if j%subsample == 0 and j <= 7500:
-                    if len(cols)==0:
-                        # Get the columns of the relevant values in the csv
-                        column_names = ['actual_TCP_pose_','actual_TCP_speed_','actual_TCP_force_']
-                        cols = [i for i, val in enumerate(row) if any([s in val for s in column_names])]
-                    elif j != 0:
-                        row = np.array(row,dtype=float)
-                        # Convert from axis-angle to quaternion
-                        qa.append(((quaternion.from_rotation_vector(row[cols[3:6]]))).as_array())
-    qa = np.vstack(qa)
-    qa = quaternion.from_array(np.mean(qa,axis=0))
     for file in files:
         with open(os.path.join(path, file)) as csv_file:
             reader = csv.reader(csv_file, delimiter=' ')
@@ -77,6 +62,9 @@ def create_dataset(path,subsample=100):
                         twist = row[cols[6:12]]
                         # Convert from axis-angle to quaternion
                         quat = quaternion.from_rotation_vector(row[cols[3:6]])
+                        # Recover the auxiliary quaternion
+                        if qa is None:
+                            qa = quat
                         # Handle representation ambiguities
                         if prev_quat is not None:
                             max_prev = np.argmax(quat.abs())

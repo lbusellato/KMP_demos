@@ -20,6 +20,7 @@ def main(demo):
         demo3()
     if demo == '4':
         demo4()
+    print("Press any key to exit...")
     input()
 
 if __name__=='__main__':
