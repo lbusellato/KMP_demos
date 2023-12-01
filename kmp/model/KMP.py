@@ -84,9 +84,9 @@ class KMP:
                 self.sigma[:,:,id] = sigma[j]
             else:
                 # Add the new point to the database
-                self.s = np.append(self.s, np.array(s[j]).reshape(1,-1))
-                self.xi = np.append(self.xi, xi[j])
-                self.sigma = np.append(self.sigma, sigma[j])
+                self.s = np.concatenate((self.s, np.array(s[j]).reshape(1,-1)),axis=1)
+                self.xi = np.concatenate((self.xi, xi[j].T),axis=1)
+                self.sigma = np.concatenate((self.sigma, np.expand_dims(sigma[j],2)),axis=2)
         # Refit the model with the new data
         self.fit(self.s, self.xi, self.sigma)
 
@@ -122,13 +122,9 @@ class KMP:
         kdtt = (kdtt_tmp - ktt) / dt
         kdtdt = (kdtdt_tmp - ktdt_tmp - kdtt_tmp + ktt) / dt**2
         # Fill the kernel matrix
-        kernel_matrix = np.zeros((self.O, self.O))
-        dim = self.O // 2
-        for i in range(dim):
-            kernel_matrix[i, i] = ktt
-            kernel_matrix[i, i + dim] = ktdt
-            kernel_matrix[i + dim, i] = kdtt
-            kernel_matrix[i + dim, i + dim] = kdtdt
+        O = self.O // 2
+        kernel_matrix = np.block([[ktt*np.eye(O), ktdt*np.eye(O)],[kdtt*np.eye(O), kdtdt*np.eye(O)]])
+
         return kernel_matrix
 
     def fit(self, X: np.ndarray, mu: np.ndarray, var: np.ndarray) -> None:
@@ -177,7 +173,6 @@ class KMP:
         sigma : np.ndarray of shape (n_features,n_features,n_samples)
             The array of predicted covariance matrices.
         """
-        self.alpha = 40# s.shape[1] / self.l
         xi = np.zeros((self.O, s.shape[1]))
         sigma = np.zeros((self.O, self.O, s.shape[1]))
         for j in range(s.shape[1]):
@@ -189,7 +184,7 @@ class KMP:
                 )
                 for h in range(self.O):
                     Y[i * self.O + h] = self.xi[h, i]
-            xi[:, j] = np.squeeze((k @ self._estimator @ Y.reshape(-1, 1)))
+            xi[:, j] = k @ self._estimator @ Y
             sigma[:, :, j] = self.alpha * (
                 self.__kernel_matrix(s[:, j], s[:, j]) - k @ self._estimator @ k.T
             )

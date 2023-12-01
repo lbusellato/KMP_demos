@@ -9,7 +9,7 @@ logging.basicConfig(
 )
 import sys
 
-from kmp import demo1, demo2, demo3, demo4
+from kmp import demo1, demo2, demo3
 
 def main(demo):
     if demo == '1':
@@ -18,8 +18,6 @@ def main(demo):
         demo2()
     if demo == '3':
         demo3()
-    if demo == '4':
-        demo4()
     print("Press any key to exit...")
     input()
 
