@@ -155,7 +155,7 @@ class demo1:
                 time = self.kmp_dt*np.arange(1,int(self.N/self.H)+1).reshape(1,-1)
 
                 # Set up KMP
-                self.kmp = KMP()
+                self.kmp = KMP(l=0.5, alpha=40, sigma_f=200, time_driven_kernel=False)
                 self.kmp.fit(time, self.mu, self.sigma)
                 self.mu_kmp, self.sigma_kmp = self.kmp.predict(time)
                 
@@ -238,14 +238,14 @@ class demo2:
         mu_pos, sigma_pos = gmm.predict(time_single)
 
         # Learning
-        kmp_pos = KMP(l=0.5,lc=60,kernel_gamma=4)
+        kmp_pos = KMP(l=0.5, alpha=60, sigma_f=4, time_driven_kernel=False)
         kmp_pos.fit(time_single, mu_pos, sigma_pos)
         mu_pos_kmp, sigma_pos_kmp = kmp_pos.predict(time_single)
         self.plot_mean(self.axs[0,1],time_single.T,mu_pos_kmp[:3])
 
         # Adaptation
         # Note that I use another KMP instance here, but just for graphical purposes. kmp_pos could have been used
-        kmp_pos_ad = KMP(l=0.5,lc=60,kernel_gamma=4)
+        kmp_pos_ad = KMP(l=0.5, alpha=60, sigma_f=4, time_driven_kernel=False)
         kmp_pos_ad.fit(time_single, mu_pos, sigma_pos)
         waypoint = [0.0,0.85,0.3]
         kmp_pos_ad.set_waypoint([1],np.array(waypoint).reshape(1,-1),np.eye(3)*1e-6)
@@ -261,7 +261,7 @@ class demo2:
         mu_quat, sigma_quat = gmm_quat.predict(time_single)
 
         # Learning
-        kmp_quat = KMP(l=0.5,lc=60,kernel_gamma=4)
+        kmp_quat = KMP(l=0.5, alpha=60, sigma_f=4, time_driven_kernel=False)
         kmp_quat.fit(time_single, mu_quat, sigma_quat)
         mu_quat_kmp, sigma_quat_kmp = kmp_quat.predict(time_single)
         self.plot_mean(self.axs[2,1],time_single.T,mu_quat_kmp)
@@ -276,7 +276,7 @@ class demo2:
         self.plot_mean(self.axs[1,1],time_single.T,kmp_quats)
 
         # Adaptation
-        kmp_quat_ad = KMP(l=0.5,lc=60,kernel_gamma=4)
+        kmp_quat_ad = KMP(l=0.5, alpha=60, sigma_f=4, time_driven_kernel=False)
         kmp_quat_ad.fit(time_single,mu_quat,sigma_quat)
         # Project to euclidean space
         des_quat = quaternion(-0.2,np.array([0.8,-0.7,-1.6]))
@@ -310,7 +310,8 @@ class demo2:
             ax.plot(time, mu[3,:],color='purple')
 
 class demo3:
-    """KMP with linear velocity learning and adaptation. Basically demo 1, but with velocity taken into account and no dynamic adding of points"""
+    """KMP with linear velocity learning and adaptation. Basically demo 1, but with velocity taken 
+    into account and no dynamic adding of points"""
     
     def __init__(self) -> None:
         self.__logger = logging.getLogger(__name__)
@@ -318,29 +319,24 @@ class demo3:
         # Set up the plots
         plt.ion()
         self.fig, self.axs = plt.subplots(1,5,figsize=(16,4))
-        
-        # Position/velocity KMP
+
+        # Recover the letter data
         path = os.getcwd() + '/2Dletters/G.mat'
+        subsample = 5 # Reduce the number of points 
         H = 5 # Number of demonstrations
         self.demos = utils.read_struct(path,max_cell=H)
         pos = np.concatenate([d['pos'] for d in self.demos], axis=1)
+        pos = pos[:, ::subsample]
         vel = np.concatenate([d['vel'] for d in self.demos], axis=1)
+        vel = vel[:, ::subsample]
         N = pos.shape[1] # Length of each demonstration
-        self.gmm = GaussianMixtureModel(n_components_range=np.arange(1,16),n_demos=H,init_params='uniform')
-        # Input: time, output: position/velocity
+        # Prepare the inputs for GMM/KMP
         dt = 0.01
-        X = dt*np.tile(np.linspace(1,int(N/H),int(N/H)),H).reshape(1,-1)
-        Y = np.vstack((pos,vel))
-        self.gmm.fit(X,Y)
-        # Compute the reference trajectory with GMR
-        self.mu, self.sigma = self.gmm.predict(dt*np.arange(int(N/H)).reshape(1,-1))
-        # Plot the GMR
-        self.axs[0].plot(self.mu[0,:],self.mu[1,:],color="grey")
-        # Input vector for KMP
-        self.kmp_dt = 0.01
-        time = self.kmp_dt*np.arange(1,int(N/H)+1).reshape(1,-1)
-        # Set up the first KMP
-        self.kmp_pos = KMP(l=1,lc=1,kernel_gamma=6)
+        time = dt*np.tile(np.linspace(1,int(N/H),int(N/H)),H).reshape(1,-1)
+        X = np.vstack((time,pos,vel)).T # Transpose to have shape (n_features, n_samples)
+        #self.kmp_dt = 0.01
+        #time = self.kmp_dt*np.arange(1,int(N/H)+1).reshape(1,-1)
+        # Points for KMP adaptation
         t = [0.01,0.25,1.2,2]
         p1 = np.array([8, 10, -50, 0]).reshape(1,-1)
         p2 = np.array([-1, 6, -25, -40]).reshape(1,-1)
@@ -348,19 +344,30 @@ class demo3:
         p4 = np.array([-3, 1, -10, 3]).reshape(1,-1)
         p = [p1,p2,p3,p4]
         var = np.eye(4)*1e-6
-        self.kmp_pos.fit(time, self.mu, self.sigma)
-        self.kmp_pos.set_waypoint(t, p, [var,var,var,var])
-        self.kmp_pos, _ = self.kmp_pos.predict(time)
-        self.axs[0].plot(self.kmp_pos[0,:],self.kmp_pos[1,:],color="green")
+
+        # GMM on the position/velocity
+        self.gmm = GaussianMixtureModel(n_demos=H)
+        self.gmm.fit(X)
+        mu, sigma = self.gmm.predict(time)
+
+        # KMP on the position/velocity, with adaptation
+        self.kmp_pos = KMP(l=100,lc=1,kernel_gamma=6)
+        self.kmp_pos.fit(time, mu, sigma)
+        #self.kmp_pos.set_waypoint(t, p, [var,var,var,var])
+        kmp_pos, _ = self.kmp_pos.predict(time)
+
+        # Plot everything
+        self.axs[0].plot(mu[0,:],mu[1,:],color="grey")
+        self.axs[0].plot(kmp_pos[0,:],kmp_pos[1,:],color="green")
         time = np.reshape(time, (200))
-        self.axs[1].plot(time,self.kmp_pos[0,:],color="green")
-        self.axs[2].plot(time,self.kmp_pos[1,:],color="green")
-        self.axs[3].plot(time,self.kmp_pos[2,:],color="green")
-        self.axs[4].plot(time,self.kmp_pos[3,:],color="green")
-        self.axs[1].plot(time,self.mu[0,:],linestyle="dashed",color="grey")
-        self.axs[2].plot(time,self.mu[1,:],linestyle="dashed",color="grey")
-        self.axs[3].plot(time,self.mu[2,:],linestyle="dashed",color="grey")
-        self.axs[4].plot(time,self.mu[3,:],linestyle="dashed",color="grey")
+        self.axs[1].plot(time,kmp_pos[0,:],color="green")
+        self.axs[2].plot(time,kmp_pos[1,:],color="green")
+        self.axs[3].plot(time,kmp_pos[2,:],color="green")
+        self.axs[4].plot(time,kmp_pos[3,:],color="green")
+        self.axs[1].plot(time,mu[0,:],linestyle="dashed",color="grey")
+        self.axs[2].plot(time,mu[1,:],linestyle="dashed",color="grey")
+        self.axs[3].plot(time,mu[2,:],linestyle="dashed",color="grey")
+        self.axs[4].plot(time,mu[3,:],linestyle="dashed",color="grey")
         self.axs[0].scatter([p1[0,0],p2[0,0],p3[0,0],p4[0,0]],[p1[0,1],p2[0,1],p3[0,1],p4[0,1]])
         self.axs[1].scatter(t,[p1[0,0],p2[0,0],p3[0,0],p4[0,0]])
         self.axs[2].scatter(t,[p1[0,1],p2[0,1],p3[0,1],p4[0,1]])
