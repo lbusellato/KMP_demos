@@ -281,7 +281,7 @@ class demo2:
         # Project to euclidean space
         des_quat = quaternion(-0.2,np.array([0.8,-0.7,-1.6]))
         self.axs[1,2].scatter([1,1,1,1],des_quat.as_array(),marker='+')
-        waypoint = (des_quat*qa).log()
+        waypoint = (des_quat*(~qa)).log()
         kmp_quat_ad.set_waypoint([1],waypoint.reshape(1,-1),np.eye(3)*1e-6)
         self.axs[2,2].scatter([1,1,1],waypoint[:3],marker='+')
         mu_quat_kmp_ad, sigma_quat_kmp_ad = kmp_quat_ad.predict(time_single)
